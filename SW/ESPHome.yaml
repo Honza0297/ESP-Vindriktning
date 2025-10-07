@@ -35,6 +35,7 @@ api:
   password: ${api_password}
 ota:
   password: ${ota_password}
+  platform: esphome
 
 logger:
 
