@@ -112,7 +112,7 @@ void alert(int id) {
   while (1) {
     if (i > 10) {
       Serial.println("Maybe need Reboot...");
-      //ESP.restart();
+      ESP.restart();
       break;
     }
     rgbWS.setBrightness(255);

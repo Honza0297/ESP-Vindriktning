@@ -1,8 +1,12 @@
 #include "pm1006.h"
 #include <Adafruit_NeoPixel.h>
-#include <SensirionI2CScd4x.h>
 #include <Wire.h>
 
+
+#include <SensirionI2CScd4x.h>
+#include <SensirionI2CSgp41.h>
+#include <VOCGasIndexAlgorithm.h>
+#include <NOxGasIndexAlgorithm.h>
 #define PIN_FAN 12
 #define PIN_LED 25
 #define RXD2 16
@@ -10,13 +14,25 @@
 
 #define BRIGHTNESS 10
 
-#define PM_LED 1
-#define TEMP_LED 2
-#define CO2_LED 3
+#define PM_LED 1 // spodni
+#define TEMP_LED 2 // prostredni
+#define CO2_LED 3 // vrchni
 
 static PM1006 pm1006(&Serial2);
 Adafruit_NeoPixel rgbWS = Adafruit_NeoPixel(3, PIN_LED, NEO_GRB + NEO_KHZ800);
 SensirionI2CScd4x scd4x;
+SensirionI2CSgp41 sgp41;
+VOCGasIndexAlgorithm vocAlgorithm;
+NOxGasIndexAlgorithm noxAlgorithm;
+
+
+
+float temperature = 0.0;
+float humidity = 0.0;
+uint16_t srawVoc = 0;
+uint16_t srawNox = 0;
+int32_t vocIndex;
+int32_t noxIndex;
 
 void setup() {
   pinMode(PIN_FAN, OUTPUT); // Fan
@@ -30,6 +46,7 @@ void setup() {
   uint16_t error;
   char errorMessage[256];
   scd4x.begin(Wire);
+  sgp41.begin(Wire);
   
   Serial.println("Start...");
   delay(500);
@@ -101,8 +118,6 @@ void loop() {
   Serial.println("Fan OFF");
   
   uint16_t co2;
-  float temperature;
-  float humidity;
   error = scd4x.readMeasurement(co2, temperature, humidity);
   if (error) {
     Serial.print("SCD41 Error trying to execute readMeasurement(): ");
@@ -111,49 +126,69 @@ void loop() {
     alert(CO2_LED);
   } else if (co2 == 0) {
     Serial.println("Invalid sample detected, skipping.");
+  } 
+
+  // VOX and NOX measurement
+  // Convert humidity (%RH) and temperature (°C) to ticks as required by SGP41
+  uint16_t defaultRh = static_cast<uint16_t>(humidity * 65535 / 100);
+  uint16_t defaultT = static_cast<uint16_t>((temperature + 45) * 65535 / 175);
+
+  error = sgp41.measureRawSignals(defaultRh, defaultT, srawVoc, srawNox);
+  if (error) {
+      Serial.println("Error reading SGP41");
   } else {
-    //temperature = temperature -4.0;
-    
-    Serial.print("Co2:");
-    Serial.print(co2);
+    vocIndex = vocAlgorithm.process(srawVoc);
+    noxIndex = noxAlgorithm.process(srawNox);
+
+    Serial.print("VOC Index: ");
+    Serial.print(vocIndex);
     Serial.print("\t");
-    Serial.print(" Temperature:");
-    Serial.print(temperature);
-    Serial.print("\t");
-    Serial.print(" Humidity:");
-    Serial.println(humidity);
+    Serial.print("NOX Index: ");
+    Serial.println(noxIndex);
+  }
 
-    if(co2 < 1000){
-      setColorWS(0, 255, 0, CO2_LED);
-    }
-    
-    if((co2 >= 1000) && (co2 < 1200)){
-      setColorWS(128, 255, 0, CO2_LED);
-    }
-    
-    if((co2 >= 1200) && (co2 < 1500)){
-    setColorWS(255, 255, 0, CO2_LED);
-    }
-    
-    if((co2 >= 1500) && (co2 < 2000)){
-      setColorWS(255, 128, 0, CO2_LED);
-    }
-    
-    if(co2 >= 2000){
-      setColorWS(255, 0, 0, CO2_LED);
-    }
 
-    if(temperature < 23.0){
-      setColorWS(0, 0, 255, TEMP_LED);
-    }
+  //temperature = temperature -4.0;
+  
+  Serial.print("Co2:");
+  Serial.print(co2);
+  Serial.print("\t");
+  Serial.print(" Temperature:");
+  Serial.print(temperature);
+  Serial.print("\t");
+  Serial.print(" Humidity:");
+  Serial.println(humidity);
 
-    if((temperature >= 23.0) && (temperature < 28.0)){
-      setColorWS(0, 255, 0, TEMP_LED);
-    }
+  if(co2 < 1000){
+    setColorWS(0, 255, 0, CO2_LED);
+  }
+  
+  if((co2 >= 1000) && (co2 < 1200)){
+    setColorWS(128, 255, 0, CO2_LED);
+  }
+  
+  if((co2 >= 1200) && (co2 < 1500)){
+  setColorWS(255, 255, 0, CO2_LED);
+  }
+  
+  if((co2 >= 1500) && (co2 < 2000)){
+    setColorWS(255, 128, 0, CO2_LED);
+  }
+  
+  if(co2 >= 2000){
+    setColorWS(255, 0, 0, CO2_LED);
+  }
 
-    if(temperature >= 28.0){
-      setColorWS(255, 0, 0, TEMP_LED);
-    }
+  if(temperature < 23.0){
+    setColorWS(0, 0, 255, TEMP_LED);
+  }
+
+  if((temperature >= 23.0) && (temperature < 28.0)){
+    setColorWS(0, 255, 0, TEMP_LED);
+  }
+
+  if(temperature >= 28.0){
+    setColorWS(255, 0, 0, TEMP_LED);
   }
 
   // PM LED
@@ -185,7 +220,7 @@ void alert(int id){
   while (1){
      if (i > 10){
       Serial.println("Maybe need Reboot...");
-      //ESP.restart();
+      ESP.restart();
       break;
      }
      rgbWS.setBrightness(255);
